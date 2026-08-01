@@ -1,38 +1,34 @@
 {
   "name": "discord-failure-notifier",
   "version": "1.0.0",
+  "description": "Send a Discord webhook message when a workflow job fails",
+  "keywords": [],
+  "license": "MIT",
+  "author": "Jaded-Encoding-Thaumaturgy",
   "main": "dist/index.js",
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node24 --outfile=dist/index.js",
-    "lint": "eslint src/*.ts",
-    "format": "prettier --write \"**/*.{ts,mts,json,yml}\"",
-    "format-check": "prettier --check src/*.ts"
+    "build": "npm run typecheck && esbuild src/index.ts --bundle --platform=node --target=node24 --outfile=dist/index.js",
+    "check": "npm run format-check && npm run lint && npm run typecheck",
+    "lint": "oxlint src",
+    "format": "oxfmt --write \"**/*.{ts,json,yml}\"",
+    "format-check": "oxfmt --check \"**/*.{ts,json,yml}\"",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@actions/core": "^1.11.1",
-    "@actions/github": "^6.0.1"
+    "@actions/core": "^3.0.1",
+    "@actions/github": "^9.1.1"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
-    "@types/node": "^24.10.0",
-    "@typescript-eslint/eslint-plugin": "^8.46.3",
-    "@typescript-eslint/parser": "^8.46.3",
-    "esbuild": "^0.25.12",
-    "eslint": "^9.39.1",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-prettier": "^5.5.4",
-    "globals": "^16.5.0",
-    "jiti": "^2.6.1",
-    "prettier": "^3.6.2",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.46.3"
+    "@types/node": "^26.1.2",
+    "esbuild": "^0.28.1",
+    "oxfmt": "0.61.0",
+    "oxlint": "1.76.0",
+    "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=24.0.0"
   },
-  "prettier": {},
-  "description": "Send a Discord webhook message when a workflow job fails",
-  "keywords": [],
-  "author": "Jaded-Encoding-Thaumaturgy",
-  "license": "MIT"
+  "allowScripts": {
+    "esbuild@0.28.1": true
+  }
 }
