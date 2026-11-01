@@ -1874,6 +1874,7 @@ var require_dispatcher = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/undici/lib/dispatcher/dispatcher-base.js
 var require_dispatcher_base = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	const buffer$1 = require("node:buffer");
 	const Dispatcher = require_dispatcher();
 	const { ClientDestroyedError, ClientClosedError, InvalidArgumentError } = require_errors();
 	const { kDestroy, kClose, kClosed, kDestroyed, kDispatch, kInterceptors } = require_symbols$4();
@@ -1881,6 +1882,7 @@ var require_dispatcher_base = /* @__PURE__ */ __commonJSMin(((exports, module) =
 	const kOnClosed = Symbol("onClosed");
 	const kInterceptedDispatch = Symbol("Intercepted Dispatch");
 	const kWebSocketOptions = Symbol("webSocketOptions");
+	const kEventSourceOptions = Symbol("eventSourceOptions");
 	var DispatcherBase = class extends Dispatcher {
 		constructor(opts) {
 			super();
@@ -1889,12 +1891,16 @@ var require_dispatcher_base = /* @__PURE__ */ __commonJSMin(((exports, module) =
 			this[kClosed] = false;
 			this[kOnClosed] = [];
 			this[kWebSocketOptions] = opts?.webSocket ?? {};
+			this[kEventSourceOptions] = opts?.eventSource ?? {};
 		}
 		get webSocketOptions() {
 			return {
 				maxFragments: this[kWebSocketOptions].maxFragments ?? 131072,
 				maxPayloadSize: this[kWebSocketOptions].maxPayloadSize ?? 134217728
 			};
+		}
+		get eventSourceOptions() {
+			return { maxEventSize: this[kEventSourceOptions].maxEventSize ?? buffer$1.kStringMaxLength };
 		}
 		get destroyed() {
 			return this[kDestroyed];
@@ -5681,7 +5687,6 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		socket[kSocketUsed] = false;
 		socket[kParser] = new Parser(client, socket, llhttpInstance);
 		addListener(socket, "error", function(err) {
-			assert$20(err.code !== "ERR_TLS_CERT_ALTNAME_INVALID");
 			const parser = this[kParser];
 			if (err.code === "ECONNRESET" && parser.statusCode && !parser.shouldKeepAlive) {
 				const parserErr = parser.finish();
@@ -6188,7 +6193,6 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		client[kHTTP2Session] = session;
 		socket[kHTTP2Session] = session;
 		util.addListener(socket, "error", function(err) {
-			assert$19(err.code !== "ERR_TLS_CERT_ALTNAME_INVALID");
 			this[kError] = err;
 			this[kClient][kOnError](err);
 		});
@@ -6242,7 +6246,6 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 	}
 	function onHttp2SessionError(err) {
-		assert$19(err.code !== "ERR_TLS_CERT_ALTNAME_INVALID");
 		this[kSocket][kError] = err;
 		this[kClient][kOnError](err);
 	}
@@ -6730,8 +6733,11 @@ var require_client = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		* @param {string|URL} url
 		* @param {import('../../types/client.js').Client.Options} options
 		*/
-		constructor(url, { interceptors, maxHeaderSize, headersTimeout, socketTimeout, requestTimeout, connectTimeout, bodyTimeout, idleTimeout, keepAlive, keepAliveTimeout, maxKeepAliveTimeout, keepAliveMaxTimeout, keepAliveTimeoutThreshold, socketPath, pipelining, tls, strictContentLength, maxCachedSessions, maxRedirections, connect, maxRequestsPerClient, localAddress, maxResponseSize, autoSelectFamily, autoSelectFamilyAttemptTimeout, maxConcurrentStreams, allowH2, webSocket } = {}) {
-			super({ webSocket });
+		constructor(url, { interceptors, maxHeaderSize, headersTimeout, socketTimeout, requestTimeout, connectTimeout, bodyTimeout, idleTimeout, keepAlive, keepAliveTimeout, maxKeepAliveTimeout, keepAliveMaxTimeout, keepAliveTimeoutThreshold, socketPath, pipelining, tls, strictContentLength, maxCachedSessions, maxRedirections, connect, maxRequestsPerClient, localAddress, maxResponseSize, autoSelectFamily, autoSelectFamilyAttemptTimeout, maxConcurrentStreams, allowH2, webSocket, eventSource } = {}) {
+			super({
+				webSocket,
+				eventSource
+			});
 			if (keepAlive !== void 0) throw new InvalidArgumentError("unsupported keepAlive, use pipelining=0 instead");
 			if (socketTimeout !== void 0) throw new InvalidArgumentError("unsupported socketTimeout, use headersTimeout & bodyTimeout instead");
 			if (requestTimeout !== void 0) throw new InvalidArgumentError("unsupported requestTimeout, use headersTimeout & bodyTimeout instead");
@@ -7442,16 +7448,18 @@ var require_agent = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		return opts && opts.connections === 1 ? new Client(origin, opts) : new Pool(origin, opts);
 	}
 	var Agent = class extends DispatcherBase {
-		constructor({ factory = defaultFactory, maxRedirections = 0, connect, ...options } = {}) {
+		constructor({ factory = defaultFactory, maxRedirections = 0, connect, tls, ...options } = {}) {
 			if (typeof factory !== "function") throw new InvalidArgumentError("factory must be a function.");
 			if (connect != null && typeof connect !== "function" && typeof connect !== "object") throw new InvalidArgumentError("connect must be a function or an object");
 			if (!Number.isInteger(maxRedirections) || maxRedirections < 0) throw new InvalidArgumentError("maxRedirections must be a positive number");
 			super(options);
 			if (connect && typeof connect !== "function") connect = { ...connect };
+			if (tls && typeof tls !== "function") tls = { ...tls };
 			this[kInterceptors] = options.interceptors?.Agent && Array.isArray(options.interceptors.Agent) ? options.interceptors.Agent : [createRedirectInterceptor({ maxRedirections })];
 			this[kOptions] = {
 				...util.deepClone(options),
-				connect
+				connect,
+				tls
 			};
 			this[kOptions].interceptors = options.interceptors ? { ...options.interceptors } : void 0;
 			this[kMaxRedirections] = maxRedirections;
@@ -11880,8 +11888,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			source: null,
 			length: null
 		};
-		fetchParams.controller.onAborted = onAborted;
-		fetchParams.controller.on("terminated", onAborted);
+		if (!fetchParams.controller.resume) fetchParams.controller.on("terminated", onAborted);
 		fetchParams.controller.resume = async () => {
 			while (true) {
 				let bytes;
@@ -11958,7 +11965,6 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 					const headersList = new HeadersList();
 					for (let i = 0; i < rawHeaders.length; i += 2) headersList.append(bufferToLowerCasedHeaderName(rawHeaders[i]), rawHeaders[i + 1].toString("latin1"), true);
 					location = headersList.get("location", true);
-					this.body = new Readable({ read: resume });
 					const decoders = [];
 					const willFollow = location && request.redirect === "follow" && redirectStatusSet.has(status);
 					if (request.method !== "HEAD" && request.method !== "CONNECT" && !nullBodyStatus.includes(status) && !willFollow) {
@@ -11967,7 +11973,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 						const codings = contentEncoding ? contentEncoding.toLowerCase().split(",") : [];
 						const maxContentEncodings = 5;
 						if (codings.length > maxContentEncodings) {
-							reject(/* @__PURE__ */ new Error(`too many content-encodings in response: ${codings.length}, maximum allowed is ${maxContentEncodings}`));
+							this.abort(/* @__PURE__ */ new Error(`too many content-encodings in response: ${codings.length}, maximum allowed is ${maxContentEncodings}`));
 							return true;
 						}
 						for (let i = codings.length - 1; i >= 0; --i) {
@@ -11990,6 +11996,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 							}
 						}
 					}
+					this.body = new Readable({ read: resume });
 					const onError = this.onError.bind(this);
 					resolve({
 						status,
@@ -12009,7 +12016,6 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				},
 				onComplete() {
 					if (this.abort) fetchParams.controller.off("terminated", this.abort);
-					if (fetchParams.controller.onAborted) fetchParams.controller.off("terminated", fetchParams.controller.onAborted);
 					fetchParams.controller.ended = true;
 					this.body.push(null);
 				},
@@ -14809,6 +14815,16 @@ var require_receiver = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				if (isControlFrame(this.#info.opcode)) {
 					this.#loop = this.parseControlFrame(body);
 					this.#state = parserStates.INFO;
+					const socket = this.ws[kResponse].socket;
+					if (this.#loop && socket.writableNeedDrain) {
+						this.#loop = false;
+						socket.once("drain", () => {
+							if (this.destroyed) return;
+							this.#loop = true;
+							this.run(callback);
+						});
+						return;
+					}
 				} else if (!this.#info.compressed) {
 					if (!this.writeFragments(body)) return;
 					if (this.#maxPayloadSize > 0 && this.#fragmentsBytes > this.#maxPayloadSize) {
@@ -15390,6 +15406,7 @@ var require_util = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/undici/lib/web/eventsource/eventsource-stream.js
 var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	const buffer = require("node:buffer");
 	const { Transform } = require("node:stream");
 	const { isASCIINumber, isValidLastEventId } = require_util();
 	/**
@@ -15416,10 +15433,14 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 	* @type {32} SPACE
 	*/
 	const SPACE = 32;
+	const defaultMaxEventSize = buffer.kStringMaxLength;
 	const DATA = Buffer.from("data");
 	const EVENT = Buffer.from("event");
 	const ID = Buffer.from("id");
 	const RETRY = Buffer.from("retry");
+	const minParserItems = 1024;
+	const maxParserItems = 131072;
+	const bytesPerParserItem = 128;
 	function isASCIINumberBytes(buffer, start) {
 		if (start >= buffer.length) return false;
 		for (let i = start; i < buffer.length; i++) if (buffer[i] < 48 || buffer[i] > 57) return false;
@@ -15433,6 +15454,11 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 		if (length !== field.length) return false;
 		for (let i = 0; i < length; i++) if (line[i] !== field[i]) return false;
 		return true;
+	}
+	function createMaxEventSizeExceededError() {
+		const error = /* @__PURE__ */ new Error("EventSource message size exceeded");
+		error.aborted = false;
+		return error;
 	}
 	/**
 	* @typedef {object} EventSourceStreamEvent
@@ -15475,6 +15501,18 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 		pos = 0;
 		lineChunkIndex = 0;
 		linePos = 0;
+		lineLength = 0;
+		eventSize = 0;
+		eventFieldSizes = {
+			data: 0,
+			event: 0,
+			id: 0,
+			retry: 0
+		};
+		dataLineCount = 0;
+		maxEventSize;
+		maxDataLines;
+		maxBufferedChunks;
 		event = {
 			data: void 0,
 			event: void 0,
@@ -15483,6 +15521,7 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 		};
 		/**
 		* @param {object} options
+		* @param {number} [options.maxEventSize]
 		* @param {eventSourceSettings} options.eventSourceSettings
 		* @param {Function} [options.push]
 		*/
@@ -15490,6 +15529,10 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 			options.readableObjectMode = true;
 			super(options);
 			this.state = options.eventSourceSettings || {};
+			this.maxEventSize = options.maxEventSize ?? defaultMaxEventSize;
+			const parserItemLimit = this.maxEventSize > 0 ? Math.min(maxParserItems, Math.max(minParserItems, Math.floor(this.maxEventSize / bytesPerParserItem))) : 0;
+			this.maxDataLines = parserItemLimit;
+			this.maxBufferedChunks = parserItemLimit;
 			if (options.push) this.push = options.push;
 		}
 		/**
@@ -15501,6 +15544,10 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 		_transform(chunk, _encoding, callback) {
 			if (chunk.length === 0) {
 				callback();
+				return;
+			}
+			if (this.maxEventSize > 0 && this.chunks.length >= this.maxBufferedChunks && chunk[0] !== LF && chunk[0] !== CR) {
+				callback(createMaxEventSizeExceededError());
 				return;
 			}
 			this.chunks.push(chunk);
@@ -15533,18 +15580,32 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 				}
 				if (byte === LF || byte === CR) {
 					if (byte === CR) this.crlfCheck = true;
-					this.parseLine(this.readLine(), this.event);
+					try {
+						this.parseLine(this.readLine(), this.event);
+					} catch (error) {
+						callback(error);
+						return;
+					}
 					this.consumeCurrentByte();
 					this.eventEndCheck = true;
 					continue;
+				}
+				if (this.maxEventSize > 0 && ++this.lineLength > this.maxEventSize + 7) {
+					callback(createMaxEventSizeExceededError());
+					return;
 				}
 				this.advanceCursor();
 			}
 			callback();
 		}
+		_destroy(error, callback) {
+			this.chunks.length = 0;
+			this.clearEvent();
+			super._destroy(error, callback);
+		}
 		/**
 		* @param {Buffer} line
-		* @param {EventStreamEvent} event
+		* @param {EventSourceStreamEvent} event
 		*/
 		parseLine(line, event) {
 			if (line.length === 0) return;
@@ -15558,23 +15619,42 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 				if (line[valueStart] === SPACE) ++valueStart;
 			}
 			if (isFieldName(line, fieldLength, DATA)) {
+				if (this.maxEventSize > 0 && this.dataLineCount >= this.maxDataLines) throw createMaxEventSizeExceededError();
+				const valueBytes = line.length - valueStart;
+				const dataSize = this.eventFieldSizes.data + (event.data === void 0 ? 0 : 1) + valueBytes;
+				this.setEventFieldSize("data", dataSize);
 				const value = line.toString("utf8", valueStart);
 				if (event.data === void 0) event.data = value;
 				else event.data += `\n${value}`;
+				this.dataLineCount++;
 				return;
 			}
 			if (isFieldName(line, fieldLength, RETRY)) {
-				if (isASCIINumberBytes(line, valueStart)) event.retry = line.toString("utf8", valueStart);
+				if (isASCIINumberBytes(line, valueStart)) {
+					this.setEventFieldSize("retry", line.length - valueStart);
+					event.retry = line.toString("utf8", valueStart);
+				}
 				return;
 			}
 			if (isFieldName(line, fieldLength, ID)) {
-				if (isValidLastEventIdBytes(line, valueStart)) event.id = line.toString("utf8", valueStart);
+				if (isValidLastEventIdBytes(line, valueStart)) {
+					this.setEventFieldSize("id", line.length - valueStart);
+					event.id = line.toString("utf8", valueStart);
+				}
 				return;
 			}
 			if (isFieldName(line, fieldLength, EVENT)) {
-				const value = line.toString("utf8", valueStart);
-				if (value.length > 0) event.event = value;
+				if (valueStart < line.length) {
+					this.setEventFieldSize("event", line.length - valueStart);
+					event.event = line.toString("utf8", valueStart);
+				}
 			}
+		}
+		setEventFieldSize(field, size) {
+			const eventSize = this.eventSize - this.eventFieldSizes[field] + size;
+			if (this.maxEventSize > 0 && eventSize > this.maxEventSize) throw createMaxEventSizeExceededError();
+			this.eventSize = eventSize;
+			this.eventFieldSizes[field] = size;
 		}
 		/**
 		* @param {EventSourceStreamEvent} event
@@ -15596,6 +15676,12 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 			this.event.event = void 0;
 			this.event.id = void 0;
 			this.event.retry = void 0;
+			this.eventSize = 0;
+			this.dataLineCount = 0;
+			this.eventFieldSizes.data = 0;
+			this.eventFieldSizes.event = 0;
+			this.eventFieldSizes.id = 0;
+			this.eventFieldSizes.retry = 0;
 		}
 		hasPendingEvent() {
 			return this.event.data !== void 0 || this.event.event !== void 0 || this.event.id !== void 0 || this.event.retry !== void 0;
@@ -15620,13 +15706,15 @@ var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module
 		syncLineStartToCursor() {
 			this.lineChunkIndex = this.chunkIndex;
 			this.linePos = this.pos;
+			this.lineLength = 0;
 			this.dropConsumedChunks();
 		}
 		dropConsumedChunks() {
-			while (this.lineChunkIndex > 0) {
-				this.chunks.shift();
-				this.lineChunkIndex--;
-				this.chunkIndex--;
+			if (this.lineChunkIndex > 0) {
+				const consumed = this.lineChunkIndex;
+				this.chunks.splice(0, consumed);
+				this.lineChunkIndex = 0;
+				this.chunkIndex -= consumed;
 			}
 			if (this.chunkIndex === this.chunks.length) {
 				this.chunks.length = 0;
@@ -15713,6 +15801,7 @@ var require_eventsource = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const { delay } = require_util();
 	const { kEnumerableProperty } = require_util$7();
 	const { environmentSettingsObject } = require_util$6();
+	const { getGlobalDispatcher } = require_global();
 	let experimentalWarned = false;
 	/**
 	* A reconnection time, in milliseconds. This must initially be an implementation-defined value,
@@ -15899,6 +15988,7 @@ var require_eventsource = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				this.#state.origin = response.urlList[response.urlList.length - 1].origin;
 				const eventSourceStream = new EventSourceStream({
 					eventSourceSettings: this.#state,
+					maxEventSize: this.#dispatcher.eventSourceOptions?.maxEventSize,
 					push: (event) => {
 						this.dispatchEvent(createFastMessageEvent(event.type, event.options));
 					}
@@ -16007,7 +16097,8 @@ var require_eventsource = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		defaultValue: () => false
 	}, {
 		key: "dispatcher",
-		converter: webidl.converters.any
+		converter: webidl.converters.any,
+		defaultValue: () => getGlobalDispatcher()
 	}]);
 	module.exports = {
 		EventSource,
